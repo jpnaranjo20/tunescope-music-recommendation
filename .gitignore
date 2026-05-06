@@ -1,0 +1,35 @@
+# Data — never commit raw datasets or generated parquet
+data/
+
+# MLflow tracking store
+mlruns/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# uv / venv
+.venv/
+.python-version.local
+
+# Env / secrets
+.env
+.env.local
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+.claude/
+
+# Build / dist
+build/
+dist/
+
+# Streamlit
+.streamlit/secrets.toml
