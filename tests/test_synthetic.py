@@ -71,6 +71,28 @@ def test_per_user_timestamps_monotonic(generated: dict[str, pd.DataFrame]) -> No
     assert (diffs >= pd.Timedelta(0)).all()
 
 
+def test_per_user_timestamps_show_session_clustering(
+    generated: dict[str, pd.DataFrame],
+) -> None:
+    """Heavy users' inter-play gap distribution must be heavy-tailed.
+
+    With session structure, intra-session gaps are minutes-to-hours and
+    inter-session gaps are days. With uniform draws over the window (the
+    pre-patch behaviour), all gaps cluster around window/n_plays so the
+    max/median ratio stays small. Guarding against regression to that.
+    """
+    plays = generated["plays"]
+    heavy_uid = plays.user_id.value_counts().idxmax()
+    user_plays = plays[plays.user_id == heavy_uid].sort_values("ts")
+    gaps = user_plays.ts.diff().dropna()
+    assert len(gaps) > 50, "heavy user should have plenty of gaps to test"
+    ratio = gaps.max() / gaps.median()
+    assert ratio > 50, (
+        f"max/median gap ratio {ratio} is too small — looks like uniform "
+        f"Poisson rain, not session clustering"
+    )
+
+
 def test_deterministic_given_seed(tmp_path: Path) -> None:
     a = tmp_path / "a"
     b = tmp_path / "b"

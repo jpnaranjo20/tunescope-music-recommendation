@@ -41,6 +41,12 @@ WINDOW_END = pd.Timestamp("2024-01-01", tz="UTC")
 
 COUNTRIES = ("US", "GB", "DE", "BR", "JP", "CA", "FR", "AU", "MX", "ES")
 
+# Session-structure parameters. Each user gets ~ceil(n_plays / AVG_SESSION_PLAYS)
+# listening sessions, randomly placed in the window, with exponentially
+# distributed durations (so most sessions are short, a few are long).
+AVG_SESSION_PLAYS = 15
+SESSION_DURATION_MEAN_NS = int(pd.Timedelta(hours=1).value)
+
 
 @dataclass
 class GenConfig:
@@ -100,14 +106,42 @@ def _build_plays(
     n_tracks: int,
     n_plays: int,
 ) -> pd.DataFrame:
-    # User activity is power-law: a small head listens a lot.
+    """Generate (user, track, ts) tuples with session-clustered timestamps.
+
+    Plays are first assigned to users and tracks via independent power-law
+    sampling. Each user then gets a small number of randomly-placed listening
+    sessions (mean duration ~1h) over the window, and their plays are
+    distributed across those sessions and jittered within each session window.
+    This produces realistic bursty-then-quiet timelines — a necessary signal
+    for time-window features and for the event-replayer demo to look like
+    real traffic — instead of the uniform Poisson rain we'd get from
+    independent uniform draws.
+    """
     user_ids = _powerlaw_choice(rng, n_users, n_plays, alpha=1.1)
     track_ids = _powerlaw_choice(rng, n_tracks, n_plays, alpha=1.0)
 
-    # Timestamps: independent uniform draws over the window, then sorted
-    # within each user so per-user event order is monotonic.
-    span_ns = WINDOW_END.value - WINDOW_START.value
-    ts_ns = WINDOW_START.value + rng.integers(0, span_ns, size=n_plays, dtype=np.int64)
+    window_start_ns = WINDOW_START.value
+    window_span_ns = WINDOW_END.value - window_start_ns
+    ts_ns = np.empty(n_plays, dtype=np.int64)
+
+    # Group plays by user so each user gets their own sessions.
+    sort_idx = np.argsort(user_ids, kind="stable")
+    sorted_uids = user_ids[sort_idx]
+    _, run_starts, run_counts = np.unique(sorted_uids, return_index=True, return_counts=True)
+
+    for run_start, run_len in zip(run_starts, run_counts, strict=True):
+        n_sessions = max(1, int(np.ceil(run_len / AVG_SESSION_PLAYS)))
+        session_starts = window_start_ns + rng.integers(
+            0, window_span_ns, size=n_sessions, dtype=np.int64
+        )
+        session_durations = rng.exponential(SESSION_DURATION_MEAN_NS, size=n_sessions).astype(
+            np.int64
+        )
+        session_pick = rng.integers(0, n_sessions, size=run_len)
+        within_session = (rng.random(run_len) * session_durations[session_pick]).astype(np.int64)
+        ts_ns[sort_idx[run_start : run_start + run_len]] = (
+            session_starts[session_pick] + within_session
+        )
 
     df = pd.DataFrame({"user_id": user_ids, "track_id": track_ids, "_ts_ns": ts_ns})
     df = df.sort_values(["user_id", "_ts_ns"], kind="stable").reset_index(drop=True)
