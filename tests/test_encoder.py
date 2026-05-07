@@ -5,8 +5,10 @@ so tests stay fast (~1s each).
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 
+import joblib
 import pandas as pd
 import pytest
 
@@ -173,3 +175,39 @@ def test_negative_sampling_deterministic(small_dataset) -> None:
     a = sample_negatives(encoder, positives, k=4, seed=42)
     b = sample_negatives(encoder, positives, k=4, seed=42)
     pd.testing.assert_frame_equal(a, b)
+
+
+def test_encoder_pickle_round_trip(small_dataset, tmp_path: Path) -> None:
+    """joblib.dump → joblib.load must preserve the encoder so transform()
+    output is byte-identical."""
+    train, _ = split_by_time(small_dataset.plays, holdout_frac=0.2)
+    encoder = fit_encoder(train, small_dataset.users, small_dataset.tracks)
+    pairs = train[["user_id", "track_id"]].head(20).reset_index(drop=True)
+    out_a = transform(encoder, pairs)
+
+    path = tmp_path / "encoder.pkl"
+    joblib.dump(encoder, path)
+    loaded = joblib.load(path)
+    out_b = transform(loaded, pairs)
+
+    pd.testing.assert_frame_equal(out_a, out_b)
+
+
+def test_encoder_is_deterministic_in_train(small_dataset, tmp_path: Path) -> None:
+    """Re-fitting on the same train data must produce a byte-identical
+    encoder pickle. Combined with the API contract that fit_encoder only
+    accepts train data, this is the leakage guard: any future refactor
+    that quietly reads test data will perturb the hash."""
+    train, _ = split_by_time(small_dataset.plays, holdout_frac=0.2)
+
+    a = fit_encoder(train, small_dataset.users, small_dataset.tracks)
+    b = fit_encoder(train, small_dataset.users, small_dataset.tracks)
+
+    pa = tmp_path / "a.pkl"
+    pb = tmp_path / "b.pkl"
+    joblib.dump(a, pa)
+    joblib.dump(b, pb)
+
+    ha = hashlib.sha256(pa.read_bytes()).hexdigest()
+    hb = hashlib.sha256(pb.read_bytes()).hexdigest()
+    assert ha == hb, "encoder pickle hash drifted across two identical fits"
