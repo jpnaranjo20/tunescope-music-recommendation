@@ -1,5 +1,5 @@
 # Data — never commit raw datasets or generated parquet
-data/
+/data/
 
 # MLflow tracking store
 mlruns/
