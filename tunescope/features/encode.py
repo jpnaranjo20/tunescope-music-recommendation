@@ -143,3 +143,39 @@ def fit_encoder(
         countries=countries,
         n_tracks=len(tracks),
     )
+
+
+def transform(encoder: Encoder, pairs: pd.DataFrame) -> pd.DataFrame:
+    """Given (user_id, track_id) pairs, return a feature matrix.
+
+    Output rows are aligned with ``pairs``. Cold-pair interaction values
+    (user has never played the track / artist) come back as 0 for counts
+    and ``NaN`` for ``ut_days_since_last_play``. LightGBM handles
+    missing values natively.
+    """
+    out = pairs[["user_id", "track_id"]].copy().reset_index(drop=True)
+
+    out = out.merge(encoder.user_features, left_on="user_id", right_index=True, how="left")
+    out = out.merge(encoder.track_features, left_on="track_id", right_index=True, how="left")
+
+    ut_keys = list(zip(out.user_id.tolist(), out.track_id.tolist(), strict=True))
+    out["ut_prior_play_count"] = [
+        encoder.user_track_plays.get((int(u), int(t)), 0) for u, t in ut_keys
+    ]
+
+    cutoffs = [encoder.split_cutoffs.get(int(u)) for u, _ in ut_keys]
+    last_ts = [encoder.user_track_last_ts.get((int(u), int(t))) for u, t in ut_keys]
+    days: list[float] = []
+    for ts, cutoff in zip(last_ts, cutoffs, strict=True):
+        if ts is None or cutoff is None:
+            days.append(float("nan"))
+        else:
+            days.append((cutoff - ts).total_seconds() / 86400.0)
+    out["ut_days_since_last_play"] = days
+
+    ua_keys = list(zip(out.user_id.tolist(), out.t_artist_id.tolist(), strict=True))
+    out["ua_n_plays_of_artist"] = [
+        encoder.user_artist_plays.get((int(u), int(a)), 0) for u, a in ua_keys
+    ]
+
+    return out

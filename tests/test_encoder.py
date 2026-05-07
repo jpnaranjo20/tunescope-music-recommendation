@@ -17,6 +17,7 @@ from tunescope.features.encode import (
     build_labels,
     fit_encoder,
     split_by_time,
+    transform,
 )
 
 SMALL = {"n_users": 200, "n_tracks": 300, "n_plays": 5_000}
@@ -112,3 +113,32 @@ def test_fit_encoder_country_ordering_alphabetical(small_dataset) -> None:
     train, _ = split_by_time(small_dataset.plays, holdout_frac=0.2)
     encoder = fit_encoder(train, small_dataset.users, small_dataset.tracks)
     assert encoder.countries == sorted(encoder.countries)
+
+
+def test_transform_shape_and_dtypes(small_dataset) -> None:
+    train, _ = split_by_time(small_dataset.plays, holdout_frac=0.2)
+    encoder = fit_encoder(train, small_dataset.users, small_dataset.tracks)
+    pairs = train[["user_id", "track_id"]].head(50).reset_index(drop=True)
+    out = transform(encoder, pairs)
+
+    expected_cols = {
+        "user_id",
+        "track_id",
+        "u_n_plays",
+        "u_n_distinct_tracks",
+        "u_n_distinct_artists",
+        "u_days_active",
+        "u_top_artist_share",
+        "u_country",
+        "t_artist_id",
+        "t_n_plays",
+        "t_n_distinct_users",
+        "ut_prior_play_count",
+        "ut_days_since_last_play",
+        "ua_n_plays_of_artist",
+    }
+    assert set(out.columns) == expected_cols
+    assert len(out) == len(pairs)
+    assert pd.api.types.is_integer_dtype(out.u_n_plays)
+    assert pd.api.types.is_integer_dtype(out.t_n_plays)
+    assert pd.api.types.is_float_dtype(out.ut_days_since_last_play)
