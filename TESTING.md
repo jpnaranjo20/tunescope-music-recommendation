@@ -115,8 +115,91 @@ choices need tweaking before we build features off them.
 
 ---
 
-<!-- Future checkpoints get appended below as they land:
 ## Checkpoint 2 — Data loader + feature encoder
+
+**Status:** built (see commits).
+
+### What this checkpoint should do
+
+Load the parquet output of the synthetic generator (or, when present,
+Last.fm 1K) into typed in-memory DataFrames, drop cold-start users
+(`<5` plays), produce a leakage-free time-based per-user train/test
+split, build the lookup tables a LightGBM ranker needs, and serialize
+the encoder to a joblib pickle.
+
+### Tests to run
+
+#### 1. Automated suite is green
+
+```bash
+uv run pytest -v
+```
+
+Expect 21 passing tests: 7 synthetic + 3 loader + 11 encoder.
+
+#### 2. Loader smoke
+
+```bash
+uv run python -c "
+from tunescope.data.loader import load
+ds = load('data/raw/synthetic')
+print('users :', ds.users.shape)
+print('tracks:', ds.tracks.shape)
+print('plays :', ds.plays.shape)
+"
+```
+
+Expect three shapes; users count slightly less than 5,000 (cold-start
+filter applied), plays count slightly less than 500,000.
+
+#### 3. End-to-end encoder pipeline
+
+```bash
+uv run python -c "
+import joblib, os
+from tunescope.data.loader import load
+from tunescope.features.encode import (
+    build_labels, fit_encoder, sample_negatives, split_by_time, transform,
+)
+ds = load('data/raw/synthetic')
+train, test = split_by_time(ds.plays, holdout_frac=0.2)
+encoder = fit_encoder(train, ds.users, ds.tracks)
+positives = build_labels(train, threshold=3)
+negatives = sample_negatives(encoder, positives, k=4, seed=0)
+pairs = positives[['user_id', 'track_id']].head(50)
+features = transform(encoder, pairs)
+print('train plays :', len(train))
+print('test plays  :', len(test))
+print('positives   :', len(positives))
+print('negatives   :', len(negatives))
+print('feature cols:', list(features.columns))
+joblib.dump(encoder, '/tmp/encoder.pkl')
+print('encoder size:', os.path.getsize('/tmp/encoder.pkl'), 'bytes')
+"
+```
+
+Expect non-zero counts everywhere, the documented feature columns, and
+an encoder pickle of a few hundred KB to a few MB.
+
+#### 4. Leakage / determinism guards fired
+
+```bash
+uv run pytest tests/test_encoder.py::test_encoder_is_deterministic_in_train -v
+uv run pytest tests/test_encoder.py::test_encoder_pickle_round_trip -v
+```
+
+If either fails, the encoder has either started reading test data or
+its dict construction lost determinism — fix before merging anything else.
+
+### Not yet testable at this checkpoint
+
+- LightGBM ranker training + offline metrics (Recall@K, NDCG@K) — checkpoint 3
+- Co-listen / track-track similarity feature — deferred to v2 checkpoint
+- API serving, blue/green load balancer, Grafana, UI — later checkpoints
+
+---
+
+<!-- Future checkpoints get appended below as they land:
 ## Checkpoint 3 — LightGBM ranker + MLflow training pipeline
 ## Checkpoint 4 — FastAPI serving layer
 ## Checkpoint 5 — Python load balancer + docker-compose
