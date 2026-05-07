@@ -16,6 +16,7 @@ from tunescope.features.encode import (
     Encoder,
     build_labels,
     fit_encoder,
+    sample_negatives,
     split_by_time,
     transform,
 )
@@ -142,3 +143,33 @@ def test_transform_shape_and_dtypes(small_dataset) -> None:
     assert pd.api.types.is_integer_dtype(out.u_n_plays)
     assert pd.api.types.is_integer_dtype(out.t_n_plays)
     assert pd.api.types.is_float_dtype(out.ut_days_since_last_play)
+
+
+def test_negative_sampling_count_and_disjoint(small_dataset) -> None:
+    train, _ = split_by_time(small_dataset.plays, holdout_frac=0.2)
+    encoder = fit_encoder(train, small_dataset.users, small_dataset.tracks)
+    positives = build_labels(train, threshold=3).head(20)
+    if len(positives) == 0:
+        pytest.skip("no positives in fixture; bump SMALL plays count")
+
+    negs = sample_negatives(encoder, positives, k=4, seed=0)
+
+    assert len(negs) == 4 * len(positives)
+    assert (negs.liked == 0).all()
+    assert list(negs.columns) == ["user_id", "track_id", "liked"]
+
+    train_pairs = set(zip(train.user_id, train.track_id, strict=True))
+    for _, row in negs.iterrows():
+        assert (int(row.user_id), int(row.track_id)) not in train_pairs
+
+
+def test_negative_sampling_deterministic(small_dataset) -> None:
+    train, _ = split_by_time(small_dataset.plays, holdout_frac=0.2)
+    encoder = fit_encoder(train, small_dataset.users, small_dataset.tracks)
+    positives = build_labels(train, threshold=3).head(20)
+    if len(positives) == 0:
+        pytest.skip("no positives in fixture")
+
+    a = sample_negatives(encoder, positives, k=4, seed=42)
+    b = sample_negatives(encoder, positives, k=4, seed=42)
+    pd.testing.assert_frame_equal(a, b)

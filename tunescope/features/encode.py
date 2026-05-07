@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import numpy as np
 import pandas as pd
 
 
@@ -179,3 +180,65 @@ def transform(encoder: Encoder, pairs: pd.DataFrame) -> pd.DataFrame:
     ]
 
     return out
+
+
+def sample_negatives(
+    encoder: Encoder,
+    positive_pairs: pd.DataFrame,
+    *,
+    k: int = 4,
+    seed: int = 0,
+) -> pd.DataFrame:
+    """For each positive (u, t), sample ``k`` random tracks the user has
+    never played in train. Returns a DataFrame with columns
+    ``(user_id, track_id, liked=0)``.
+
+    Per-user negatives are sampled WITHOUT replacement to avoid trivial
+    duplicates. If a user has played more than half the catalog,
+    rejection sampling stalls — fall back to ``np.setdiff1d`` then
+    ``rng.choice``.
+    """
+    rng = np.random.default_rng(seed)
+
+    user_played: dict[int, set[int]] = {}
+    for u, t in encoder.user_track_plays:
+        user_played.setdefault(int(u), set()).add(int(t))
+
+    out_users: list[int] = []
+    out_tracks: list[int] = []
+
+    for u in positive_pairs.user_id.tolist():
+        u = int(u)
+        played = user_played.get(u, set())
+        if encoder.n_tracks - len(played) < k:
+            unplayed_count = encoder.n_tracks - len(played)
+            if unplayed_count <= 0:
+                continue
+            unplayed = np.setdiff1d(np.arange(encoder.n_tracks), list(played))
+            chosen = rng.choice(unplayed, size=unplayed_count, replace=False)
+        elif len(played) > encoder.n_tracks * 0.5:
+            unplayed = np.setdiff1d(np.arange(encoder.n_tracks), list(played))
+            chosen = rng.choice(unplayed, size=k, replace=False)
+        else:
+            chosen_set: set[int] = set()
+            while len(chosen_set) < k:
+                cands = rng.integers(0, encoder.n_tracks, size=k * 2)
+                for c in cands:
+                    c = int(c)
+                    if c not in played and c not in chosen_set:
+                        chosen_set.add(c)
+                        if len(chosen_set) == k:
+                            break
+            chosen = np.array(sorted(chosen_set))
+
+        for c in chosen:
+            out_users.append(u)
+            out_tracks.append(int(c))
+
+    return pd.DataFrame(
+        {
+            "user_id": out_users,
+            "track_id": out_tracks,
+            "liked": [0] * len(out_users),
+        }
+    )
