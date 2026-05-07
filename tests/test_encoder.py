@@ -12,7 +12,12 @@ import pytest
 
 from scripts.generate_synthetic import GenConfig, generate
 from tunescope.data.loader import load
-from tunescope.features.encode import build_labels, split_by_time
+from tunescope.features.encode import (
+    Encoder,
+    build_labels,
+    fit_encoder,
+    split_by_time,
+)
 
 SMALL = {"n_users": 200, "n_tracks": 300, "n_plays": 5_000}
 
@@ -72,3 +77,38 @@ def test_build_labels_threshold() -> None:
     assert int(liked.iloc[0].track_id) == 10
     assert int(liked.iloc[0].liked) == 1
     assert list(liked.columns) == ["user_id", "track_id", "liked"]
+
+
+def test_fit_encoder_user_features(small_dataset) -> None:
+    train, _ = split_by_time(small_dataset.plays, holdout_frac=0.2)
+    encoder = fit_encoder(train, small_dataset.users, small_dataset.tracks)
+
+    assert isinstance(encoder, Encoder)
+    expected_cols = [
+        "u_n_plays",
+        "u_n_distinct_tracks",
+        "u_n_distinct_artists",
+        "u_days_active",
+        "u_top_artist_share",
+        "u_country",
+    ]
+    assert list(encoder.user_features.columns) == expected_cols
+    assert len(encoder.user_features) == train.user_id.nunique()
+    # Country codes are non-negative ints
+    assert (encoder.user_features.u_country >= 0).all()
+
+
+def test_fit_encoder_track_features(small_dataset) -> None:
+    train, _ = split_by_time(small_dataset.plays, holdout_frac=0.2)
+    encoder = fit_encoder(train, small_dataset.users, small_dataset.tracks)
+
+    expected_cols = ["t_artist_id", "t_n_plays", "t_n_distinct_users"]
+    assert sorted(encoder.track_features.columns) == sorted(expected_cols)
+    # Includes cold-start tracks (zero plays)
+    assert len(encoder.track_features) == len(small_dataset.tracks)
+
+
+def test_fit_encoder_country_ordering_alphabetical(small_dataset) -> None:
+    train, _ = split_by_time(small_dataset.plays, holdout_frac=0.2)
+    encoder = fit_encoder(train, small_dataset.users, small_dataset.tracks)
+    assert encoder.countries == sorted(encoder.countries)
