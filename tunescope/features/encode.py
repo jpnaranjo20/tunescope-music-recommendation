@@ -37,3 +37,12 @@ def split_by_time(
     train = sorted_plays[is_train].reset_index(drop=True)
     test = sorted_plays[~is_train].reset_index(drop=True)
     return train, test
+
+
+def build_labels(plays: pd.DataFrame, *, threshold: int = 3) -> pd.DataFrame:
+    """Return (user_id, track_id, liked=1) for every (user, track) pair
+    appearing at least ``threshold`` times in ``plays``."""
+    counts = plays.groupby(["user_id", "track_id"]).size().rename("n").reset_index()
+    liked = counts[counts.n >= threshold].drop(columns="n").copy()
+    liked["liked"] = 1
+    return liked.reset_index(drop=True)

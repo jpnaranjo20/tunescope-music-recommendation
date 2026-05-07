@@ -7,11 +7,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pandas as pd
 import pytest
 
 from scripts.generate_synthetic import GenConfig, generate
 from tunescope.data.loader import load
-from tunescope.features.encode import split_by_time
+from tunescope.features.encode import build_labels, split_by_time
 
 SMALL = {"n_users": 200, "n_tracks": 300, "n_plays": 5_000}
 
@@ -42,3 +43,32 @@ def test_split_every_eligible_user_in_both_sides(small_dataset) -> None:
     train, test = split_by_time(plays, holdout_frac=0.2)
     assert set(plays.user_id) == set(train.user_id)
     assert set(plays.user_id) == set(test.user_id)
+
+
+def test_build_labels_threshold() -> None:
+    plays = pd.DataFrame(
+        {
+            "user_id": [1, 1, 1, 1, 2, 2, 3],
+            "track_id": [10, 10, 10, 20, 30, 30, 40],
+            "ts": pd.to_datetime(
+                [
+                    "2023-01-01",
+                    "2023-01-02",
+                    "2023-01-03",
+                    "2023-01-04",
+                    "2023-01-01",
+                    "2023-01-02",
+                    "2023-01-01",
+                ],
+                utc=True,
+            ),
+        }
+    )
+    liked = build_labels(plays, threshold=3)
+
+    # Only (user=1, track=10) appears 3+ times
+    assert len(liked) == 1
+    assert int(liked.iloc[0].user_id) == 1
+    assert int(liked.iloc[0].track_id) == 10
+    assert int(liked.iloc[0].liked) == 1
+    assert list(liked.columns) == ["user_id", "track_id", "liked"]
